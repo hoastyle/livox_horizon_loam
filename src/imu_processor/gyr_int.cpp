@@ -33,6 +33,8 @@ void GyrInt::Integrate(const sensor_msgs::ImuConstPtr &imu) {
 
     /// Interpolate imu in
     sensor_msgs::ImuPtr imu_inter(new sensor_msgs::Imu());
+
+    // 上一帧的lidar的时间，上一帧Lidar对应的imu queue最后一个
     double dt1 = start_timestamp_ - last_imu_->header.stamp.toSec();
     double dt2 = imu->header.stamp.toSec() - start_timestamp_;
     ROS_ASSERT_MSG(dt1 >= 0 && dt2 >= 0, "%f - %f - %f",
@@ -46,6 +48,7 @@ void GyrInt::Integrate(const sensor_msgs::ImuConstPtr &imu) {
     const auto &gyr2 = imu->angular_velocity;
     const auto &acc2 = imu->linear_acceleration;
 
+    // 假设在LiDAR一帧内都是匀速的
     imu_inter->header.stamp.fromSec(start_timestamp_);
     imu_inter->angular_velocity.x = w1 * gyr1.x + w2 * gyr2.x;
     imu_inter->angular_velocity.y = w1 * gyr1.y + w2 * gyr2.y;
@@ -54,6 +57,7 @@ void GyrInt::Integrate(const sensor_msgs::ImuConstPtr &imu) {
     imu_inter->linear_acceleration.y = w1 * acc1.y + w2 * acc2.y;
     imu_inter->linear_acceleration.z = w1 * acc1.z + w2 * acc2.z;
 
+    // 存储了角速度和线加速度
     v_imu_.push_back(imu_inter);
   }
 

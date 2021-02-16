@@ -49,6 +49,8 @@
 #include <string>
 #include <vector>
 
+#include <pcl/filters/crop_box.h>
+
 #include "loam_horizon/common.h"
 #include "loam_horizon/tic_toc.h"
 
@@ -73,6 +75,8 @@ float cloudCurvature[400000];
 int cloudSortInd[400000];
 int cloudNeighborPicked[400000];
 int cloudLabel[400000];
+
+int idx = 0;
 
 bool comp(int i, int j) { return (cloudCurvature[i] < cloudCurvature[j]); }
 
@@ -330,6 +334,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
     } else
       return;
   }
+  // printf("3\n");
 
   TicToc t_whole;
   TicToc t_prepare;
@@ -338,31 +343,63 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
 
   pcl::PointCloud<PointType> laserCloudIn;
   pcl::fromROSMsg(*laserCloudMsg, laserCloudIn);
+  // printf("4\n");
+
+  // std::string fileName = "origin";
+  // fileName += std::to_string(idx) + ".pcd";
+  // pcl::io::savePCDFileASCII(fileName, laserCloudIn);
+  // ROS_INFO("Cloud index: %d, size: %d", idx, laserCloudIn.size());
+  // ++idx;
+
+  // pcl::PointCloud<PointType> tempCloud;
+  // for (auto point: laserCloudIn.points)
+  // {
+    // if (point.x > 5.0)
+        // tempCloud.push_back(point);
+  // }
+
+  // fileName = "filter";
+  // fileName += std::to_string(idx) + ".pcd";
+  // ROS_INFO("Cloud index: %d, size: %d", idx, tempCloud.size());
+  // pcl::io::savePCDFileASCII(fileName, tempCloud);
+  // ++idx;
+  // pcl::copyPointCloud(tempCloud, laserCloudIn);
+
   std::vector<int> indices;
 
   pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn, indices);
+  // 删除距圆心0.1米内的点
   removeClosedPointCloud(laserCloudIn, laserCloudIn, MINIMUM_RANGE);
+  // printf("5\n");
 
   int cloudSize = laserCloudIn.points.size();
   int count = cloudSize;
   PointType point;
+  // 假设有六条线
   std::vector<pcl::PointCloud<PointType>> laserCloudScans(N_SCANS);
   for (int i = 0; i < cloudSize; i++) {
     point.x = laserCloudIn.points[i].x;
     point.y = laserCloudIn.points[i].y;
     point.z = laserCloudIn.points[i].z;
+  // printf("6\n");
     point.intensity = laserCloudIn.points[i].intensity;
+  // printf("7\n");
+    // 从哪里得到的curvature ?
     point.curvature = laserCloudIn.points[i].curvature;
+  // printf("8\n");
     int scanID = 0;
     if (N_SCANS == 6) {
       scanID = (int)point.intensity;
+      // ROS_INFO("%s intensity %d", __func__, (int)point.intensity);
     }
     laserCloudScans[scanID].push_back(point);
   }
+  // printf("9\n");
 
   cloudSize = count;
   printf("points size %d \n", cloudSize);
 
+  // 将六条线，按顺序组合在同一个点云中
   pcl::PointCloud<PointType>::Ptr laserCloud(new pcl::PointCloud<PointType>());
   for (int i = 0; i < N_SCANS; i++) {
     scanStartInd[i] = laserCloud->size() + 5;
@@ -389,6 +426,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
     float dis = sqrt(laserCloud->points[i].x * laserCloud->points[i].x +
                      laserCloud->points[i].y * laserCloud->points[i].y +
                      laserCloud->points[i].z * laserCloud->points[i].z);
+    // 如果距离大于25米，这里cur size为2的作用是什么，近点为5,远点为2
     if (dis > kDistanceFaraway) {
       kNumCurvSize = 2;
     }
@@ -422,10 +460,13 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
                   laserCloud->points[i + 5].z;
                   */
 
+    // 方差
     float tmp2 = diffX * diffX + diffY * diffY + diffZ * diffZ;
+    // 标准差
     float tmp = sqrt(tmp2);
 
     cloudCurvature[i] = tmp2;
+    // 做归一化的目的是什么？为什么要加1e-3
     if (b_normalize_curv) {
       /// use normalized curvature
       cloudCurvature[i] = tmp / (2 * kNumCurvSize * dis + 1e-3);
@@ -436,6 +477,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
 
     /// Mark un-reliable points
     constexpr float kMaxFeatureDis = 1e4;
+    // 如果该点是异常点，设置label为99
     if (fabs(dis) > kMaxFeatureDis || fabs(dis) < 1e-4 || !std::isfinite(dis)) {
       cloudLabel[i] = 99;
       cloudNeighborPicked[i] = 1;
@@ -452,10 +494,12 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
     float diffY2 = laserCloud->points[i].y - laserCloud->points[i - 1].y;
     float diffZ2 = laserCloud->points[i].z - laserCloud->points[i - 1].z;
     float diff2 = diffX2 * diffX2 + diffY2 * diffY2 + diffZ2 * diffZ2;
+    // square of point distance
     float dis = laserCloud->points[i].x * laserCloud->points[i].x +
                 laserCloud->points[i].y * laserCloud->points[i].y +
                 laserCloud->points[i].z * laserCloud->points[i].z;
 
+    // 相邻点的距离大于某个阈值, picked设置为1的含义是什么？
     if (diff > 0.00015 * dis && diff2 > 0.00015 * dis) {
       cloudNeighborPicked[i] = 1;
     }
@@ -484,7 +528,9 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
       break;
     }
 
+    // 50, 将每条线分为50个区域
     for (int j = 0; j < kNumRegion; j++) {
+      // 子区域的起始点和结束点 sp ep
       int sp =
           scanStartInd[i] + (scanEndInd[i] - scanStartInd[i]) * j / kNumRegion;
       int ep = scanStartInd[i] +
@@ -512,11 +558,13 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
         SumCurRegion += cloudCurvature[cloudSortInd[k]];
       }
 
+      // 如果该点云的最大的curvature非常大，就将ep点的picked置为1
       if (MaxCurRegion > 3 * SumCurRegion)
         cloudNeighborPicked[cloudSortInd[ep]] = 1;
 
       t_q_sort += t_tmp.toc();
 
+      // 没有任何作用
       if (true) {
         for (int tt = sp; tt < ep - 1; ++tt) {
           ROS_ASSERT(cloudCurvature[cloudSortInd[tt]] <=
@@ -528,9 +576,12 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
       for (int k = ep; k >= sp; k--) {
         int ind = cloudSortInd[k];
 
+        // 如果NeighborPicked == 1表示该点不参与特征提取
         if (cloudNeighborPicked[ind] != 0) continue;
 
+        // 这里的阈值会因为归一化与否采用不同的值
         if (cloudCurvature[ind] > kThresholdSharp) {
+            // 最多只取前20的corner points
           largestPickedNum++;
           if (largestPickedNum <= kNumEdge) {
             cloudLabel[ind] = 2;
@@ -548,7 +599,11 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
             break;
           }
 
+          // 已经取过特征点，现将设置为不需要提取
           cloudNeighborPicked[ind] = 1;
+
+          // 对于这些corner point
+          // 如果corner point旁边的点距离很近，那么也同样设置为不参与提取特征点
 
           for (int l = 1; l <= kNumEdgeNeighbor; l++) {
             float diffX = laserCloud->points[ind + l].x -
@@ -648,6 +703,8 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg) {
   printf("sort q time %f \n", t_q_sort);
   printf("seperate points time %f \n", t_pts.toc());
 
+  // 经过以上过程，已经获得了所有的corner points和flat points
+
   if (false) {
     removeClosedPointCloud(*laserCloud, *laserCloud, MINIMUM_RANGE);
     removeClosedPointCloud(cornerPointsLessSharp, cornerPointsLessSharp,
@@ -720,13 +777,15 @@ int main(int argc, char **argv) {
 
   printf("scan line number %d \n", N_SCANS);
 
-  if (N_SCANS != 6) {
-    printf("only support livox horizon lidar!");
-    return 0;
-  }
+ if (N_SCANS != 6) {
+   printf("only support livox horizon lidar!");
+   return 0;
+ }
 
   ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>(
       "/livox_undistort", 100, laserCloudHandler);
+
+  // printf("1\n");
 
   pubLaserCloud =
       nh.advertise<sensor_msgs::PointCloud2>("/velodyne_cloud_2", 100);
@@ -748,6 +807,7 @@ int main(int argc, char **argv) {
 
   pub_curvature =
       nh.advertise<visualization_msgs::MarkerArray>("/curvature", 100);
+  // printf("2\n");
 
   if (PUB_EACH_LINE) {
     for (int i = 0; i < N_SCANS; i++) {

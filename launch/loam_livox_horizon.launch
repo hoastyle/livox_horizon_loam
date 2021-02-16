@@ -15,6 +15,10 @@
 
     <node pkg="loam_horizon" type="scanRegistration" name="scanRegistration" output="screen" >
         <remap from="/livox_undistort" to="/livox_pcl0" />
+        <!--remap from="/livox_undistort" to="/livox_pcl0" /-->
+        <!--remap from="/livox_undistort" to="/livox/lidar" /-->
+        <!--remap from="/livox_undistort" to="/livox/lidar_1HDDH1200102061" /-->
+        <!--remap from="/livox_undistort" to="/livox_pcl0" /-->
     </node>
 
     <node pkg="loam_horizon" type="laserOdometry" name="laserOdometry" output="screen" />

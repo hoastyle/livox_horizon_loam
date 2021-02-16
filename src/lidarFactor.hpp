@@ -17,6 +17,7 @@ struct LidarEdgeFactor {
         last_point_b(last_point_b_),
         s(s_) {}
 
+  // 这里的输入q是个相对旋转
   template <typename T>
   bool operator()(const T *q, const T *t, T *residual) const {
     Eigen::Matrix<T, 3, 1> cp{T(curr_point.x()), T(curr_point.y()),
@@ -36,6 +37,7 @@ struct LidarEdgeFactor {
     Eigen::Matrix<T, 3, 1> lp;
     lp = q_last_curr * cp + t_last_curr;
 
+    // pp1 x pp2 / |p1p2|为点到线的距离
     Eigen::Matrix<T, 3, 1> nu = (lp - lpa).cross(lp - lpb);
     Eigen::Matrix<T, 3, 1> de = lpa - lpb;
 

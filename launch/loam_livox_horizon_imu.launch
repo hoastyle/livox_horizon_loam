@@ -13,7 +13,9 @@
     <param name="mapping_line_resolution" type="double" value="0.3"/>
     <param name="mapping_plane_resolution" type="double" value="0.6"/>
 
-    <node pkg="loam_horizon" type="scanRegistration" name="scanRegistration" output="screen" />
+    <node pkg="loam_horizon" type="scanRegistration" name="scanRegistration" output="screen" >
+        <remap from="/livox_undistort" to="/livox/lidar_1HDDH1200102061" />
+    </node>
 
     <node pkg="loam_horizon" type="laserOdometry" name="laserOdometry" output="screen" />
 
@@ -22,7 +24,8 @@
     <node pkg="loam_horizon" type="livox_repub" name="livox_repub" output="screen" />
 
     <node pkg="loam_horizon" type="imu_process" name="imu_process" output="screen" >
-         <remap from="/imu" to="/livox/imu"/>
+         <!--remap from="/imu" to="/livox/imu"/-->
+         <remap from="/imu" to="/livox/imu_1HDDH1200102061" />
     </node>
 
 

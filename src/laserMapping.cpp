@@ -119,6 +119,7 @@ Eigen::Map<Eigen::Vector3d> t_w_curr(parameters + 4);
 
 // wmap_T_odom * odom_T_curr = wmap_T_curr;
 // transformation between odom's world and map's world frame
+// Hao: 固定的，通过标定得到
 Eigen::Quaterniond q_wmap_wodom(1, 0, 0, 0);
 Eigen::Vector3d t_wmap_wodom(0, 0, 0);
 
@@ -150,11 +151,14 @@ void transformAssociateToMap() {
   t_w_curr = q_wmap_wodom * t_wodom_curr + t_wmap_wodom;
 }
 
+// 更新wmap_wodom transform
 void transformUpdate() {
+  // 根据优化得到最新的q_w_curr，即curr to w transform
   q_wmap_wodom = q_w_curr * q_wodom_curr.inverse();
   t_wmap_wodom = t_w_curr - q_wmap_wodom * t_wodom_curr;
 }
 
+// current cs to world map cs
 void pointAssociateToMap(PointType const *const pi, PointType *const po) {
   Eigen::Vector3d point_curr(pi->x, pi->y, pi->z);
   Eigen::Vector3d point_w = q_w_curr * point_curr + t_w_curr;
@@ -243,9 +247,12 @@ void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr &laserOdometry) {
   t_wodom_curr.y() = laserOdometry->pose.pose.position.y;
   t_wodom_curr.z() = laserOdometry->pose.pose.position.z;
 
+  // Hao: world odometry pose to world map pose
+  // Hao: how to get q_wmap_wodom and t_wmap_wodom(wodom to wmap)
   Eigen::Quaterniond q_w_curr = q_wmap_wodom * q_wodom_curr;
   Eigen::Vector3d t_w_curr = q_wmap_wodom * t_wodom_curr + t_wmap_wodom;
 
+  // Hao: publish world map pose
   nav_msgs::Odometry odomAftMapped;
   odomAftMapped.header.frame_id = "/camera_init";
   odomAftMapped.child_frame_id = "/aft_mapped";
@@ -308,6 +315,8 @@ void process() {
         break;
       }
 
+      // Hao: 以上确保所有的需要数据都有新的并且各个数据之间是同步的
+      // Hao: 主要是边界点，平面点以及完整的点云
       laserCloudCornerLast->clear();
       pcl::fromROSMsg(*cornerLastBuf.front(), *laserCloudCornerLast);
       cornerLastBuf.pop();
@@ -320,6 +329,7 @@ void process() {
       pcl::fromROSMsg(*fullResBuf.front(), *laserCloudFullRes);
       fullResBuf.pop();
 
+      // Hao: 取queue里的第一帧点云
       q_wodom_curr.x() = odometryBuf.front()->pose.pose.orientation.x;
       q_wodom_curr.y() = odometryBuf.front()->pose.pose.orientation.y;
       q_wodom_curr.z() = odometryBuf.front()->pose.pose.orientation.z;
@@ -342,14 +352,20 @@ void process() {
       transformAssociateToMap();
 
       TicToc t_shift;
+      // Hao: 三维栅格化，width 10 height 10, depth 5, 根据坐标确定cube的index
       int centerCubeI = int((t_w_curr.x() + 25.0) / 50.0) + laserCloudCenWidth;
       int centerCubeJ = int((t_w_curr.y() + 25.0) / 50.0) + laserCloudCenHeight;
       int centerCubeK = int((t_w_curr.z() + 25.0) / 50.0) + laserCloudCenDepth;
 
+      // 因为 -75 - -25也为0，-125 - -75是-1，需要集体-1才合理
+      // 由于计算机求余是向零取整，为了不使（-50.0,50.0）求余后都向零偏移，当被求余数为负数时求余结果统一向左偏移一个单位，也即减一
       if (t_w_curr.x() + 25.0 < 0) centerCubeI--;
       if (t_w_curr.y() + 25.0 < 0) centerCubeJ--;
       if (t_w_curr.z() + 25.0 < 0) centerCubeK--;
 
+      // 调整之后取值范围:3 < centerCubeI < 18， 3 < centerCubeJ < 8, 3 < centerCubeK < 18
+      // 如果处于下边界，表明地图向负方向延伸的可能性比较大，则循环移位，将数组中心点向上边界调整一个单位
+      // Hao: 即右移一个单位
       while (centerCubeI < 3) {
         for (int j = 0; j < laserCloudHeight; j++) {
           for (int k = 0; k < laserCloudDepth; k++) {
@@ -385,6 +401,7 @@ void process() {
         laserCloudCenWidth++;
       }
 
+      // laserCloudWidth为21
       while (centerCubeI >= laserCloudWidth - 3) {
         for (int j = 0; j < laserCloudHeight; j++) {
           for (int k = 0; k < laserCloudDepth; k++) {
@@ -567,15 +584,18 @@ void process() {
       int laserCloudValidNum = 0;
       int laserCloudSurroundNum = 0;
 
+      // Hao: 当前有效的5 * 5 * 5 = 125个cube，即当前的周围250米的cube
       for (int i = centerCubeI - 2; i <= centerCubeI + 2; i++) {
         for (int j = centerCubeJ - 2; j <= centerCubeJ + 2; j++) {
           for (int k = centerCubeK - 1; k <= centerCubeK + 1; k++) {
             if (i >= 0 && i < laserCloudWidth && j >= 0 &&
                 j < laserCloudHeight && k >= 0 && k < laserCloudDepth) {
+              // Hao: for corner
               laserCloudValidInd[laserCloudValidNum] =
                   i + laserCloudWidth * j +
                   laserCloudWidth * laserCloudHeight * k;
               laserCloudValidNum++;
+              // Hao: for surf
               laserCloudSurroundInd[laserCloudSurroundNum] =
                   i + laserCloudWidth * j +
                   laserCloudWidth * laserCloudHeight * k;
@@ -587,6 +607,7 @@ void process() {
 
       laserCloudCornerFromMap->clear();
       laserCloudSurfFromMap->clear();
+      // Hao: 获取250范围内所有的corner和surf点
       for (int i = 0; i < laserCloudValidNum; i++) {
         *laserCloudCornerFromMap +=
             *laserCloudCornerArray[laserCloudValidInd[i]];
@@ -595,14 +616,18 @@ void process() {
       int laserCloudCornerFromMapNum = laserCloudCornerFromMap->points.size();
       int laserCloudSurfFromMapNum = laserCloudSurfFromMap->points.size();
 
+      // Hao: 对当前的corner point，进行降采样，存储到laserCloudCornerStack中
       pcl::PointCloud<PointType>::Ptr laserCloudCornerStack(
           new pcl::PointCloud<PointType>());
+      // leaf size:0.4
       downSizeFilterCorner.setInputCloud(laserCloudCornerLast);
       downSizeFilterCorner.filter(*laserCloudCornerStack);
       int laserCloudCornerStackNum = laserCloudCornerStack->points.size();
 
+      // Hao: 对当前的corner point，进行降采样，存储到laserCloudSurfStack中
       pcl::PointCloud<PointType>::Ptr laserCloudSurfStack(
           new pcl::PointCloud<PointType>());
+      // leaf size:0.8
       downSizeFilterSurf.setInputCloud(laserCloudSurfLast);
       downSizeFilterSurf.filter(*laserCloudSurfStack);
       int laserCloudSurfStackNum = laserCloudSurfStack->points.size();
@@ -610,6 +635,7 @@ void process() {
       printf("map prepare time %f ms\n", t_shift.toc());
       printf("map corner num %d  surf num %d \n", laserCloudCornerFromMapNum,
              laserCloudSurfFromMapNum);
+      // 将当前帧的corner surf和map的corner surf进行匹配，得到优化后的pose
       if (laserCloudCornerFromMapNum > 10 && laserCloudSurfFromMapNum > 50) {
         TicToc t_opt;
         TicToc t_tree;
@@ -617,6 +643,7 @@ void process() {
         kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMap);
         printf("build tree time %f ms \n", t_tree.toc());
 
+        // Hao: 2次迭代，上一次的迭代结果作为下一次迭代的起始，更新了parameters
         for (int iterCount = 0; iterCount < 2; iterCount++) {
           // ceres::LossFunction *loss_function = NULL;
           ceres::LossFunction *loss_function = new ceres::HuberLoss(0.1);
@@ -652,6 +679,8 @@ void process() {
               }
               center = center / 5.0;
 
+              // Hao: 为什么这么做？
+              // Hao: 构建协方差，求特征值和特征向量，类似主成分分析
               Eigen::Matrix3d covMat = Eigen::Matrix3d::Zero();
               for (int j = 0; j < 5; j++) {
                 Eigen::Matrix<double, 3, 1> tmpZeroMean =
@@ -807,10 +836,12 @@ void process() {
       } else {
         ROS_WARN("time Map corner and surf num are not enough");
       }
+      // Hao:更新wmap_wodom transform
       transformUpdate();
 
       TicToc t_add;
       for (int i = 0; i < laserCloudCornerStackNum; i++) {
+        // Hao: 将当前帧的corner point变换到world map cs，并计算其所在cube，加入到对应的laserCloudCornerArray中
         pointAssociateToMap(&laserCloudCornerStack->points[i], &pointSel);
 
         int cubeI = int((pointSel.x + 25.0) / 50.0) + laserCloudCenWidth;

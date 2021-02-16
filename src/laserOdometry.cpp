@@ -55,7 +55,7 @@
 #include "loam_horizon/common.h"
 #include "loam_horizon/tic_toc.h"
 
-#define DISTORTION 0 // Low-speed scene, without distortion correction
+#define DISTORTION 1 // Low-speed scene, without distortion correction
 
 int corner_correspondence = 0, plane_correspondence = 0;
 
@@ -100,6 +100,7 @@ int laserCloudSurfLastNum = 0;
 Eigen::Quaterniond q_w_curr(1, 0, 0, 0);
 Eigen::Vector3d t_w_curr(0, 0, 0);
 
+// Hao: last to current
 // q_curr_last(x, y, z, w), t_curr_last
 double para_q[4] = {0, 0, 0, 1};
 double para_t[3] = {0, 0, 0};
@@ -118,11 +119,17 @@ std::mutex mBuf;
 void TransformToStart(PointType const *const pi, PointType *const po) {
   // interpolation ratio
   double s;
+  // 运动畸变没有打开
+  // intensity的小数部分存储的是什么？
   if (DISTORTION)
     s = (pi->intensity - int(pi->intensity))*10;
   else
     s = 1.0;
+
+  // printf("s: %f, intensity: %f\n", s, pi->intensity);
   // s = 1;
+  // 这里的畸变校正是怎么做的?
+  // 没有任何作用，起始rotation 和结束rotation都是1, 0, 0, 0，所以插值的也是1, 0, 0, 0
   Eigen::Quaterniond q_point_last =
       Eigen::Quaterniond::Identity().slerp(s, q_last_curr);
   Eigen::Vector3d t_point_last = s * t_last_curr;
@@ -132,6 +139,7 @@ void TransformToStart(PointType const *const pi, PointType *const po) {
   po->x = un_point.x();
   po->y = un_point.y();
   po->z = un_point.z();
+  // intensity的含义是什么？
   po->intensity = pi->intensity;
 }
 
@@ -237,6 +245,7 @@ int main(int argc, char **argv) {
   while (ros::ok()) {
     ros::spinOnce();
 
+    // 所有都不为空，进入正常流程
     if (!cornerSharpBuf.empty() && !cornerLessSharpBuf.empty() &&
         !surfFlatBuf.empty() && !surfLessFlatBuf.empty() &&
         !fullPointsBuf.empty()) {
@@ -247,6 +256,7 @@ int main(int argc, char **argv) {
       timeSurfPointsLessFlat = surfLessFlatBuf.front()->header.stamp.toSec();
       timeLaserCloudFullRes = fullPointsBuf.front()->header.stamp.toSec();
 
+      // 做过时间同步
       if (timeCornerPointsSharp != timeLaserCloudFullRes ||
           timeCornerPointsLessSharp != timeLaserCloudFullRes ||
           timeSurfPointsFlat != timeLaserCloudFullRes ||
@@ -277,6 +287,12 @@ int main(int argc, char **argv) {
       fullPointsBuf.pop();
       mBuf.unlock();
 
+      // 接受scanRegistration.cpp中获得的四类特征点
+      // 1 corner points
+      // 2 less sharp corner points
+      // 3 flat points
+      // 4 less flat points
+
       TicToc t_whole;
       // initializing
       if (!systemInited) {
@@ -298,6 +314,7 @@ int main(int argc, char **argv) {
           ceres::Problem::Options problem_options;
 
           ceres::Problem problem(problem_options);
+          // 使用q_parameterization进行重构
           problem.AddParameterBlock(para_q, 4, q_parameterization);
           problem.AddParameterBlock(para_t, 3);
 
@@ -308,6 +325,7 @@ int main(int argc, char **argv) {
           TicToc t_data;
           for (int i = 0; i < cornerPointsSharpNum; ++i) {
             TransformToStart(&(cornerPointsSharp->points[i]), &pointSel);
+            // 按从小到大的顺序排序，0最小，4最大
             kdtreeCornerLast->nearestKSearch(pointSel, 5, pointSearchInd,
                                              pointSearchSqDis);
 
@@ -322,8 +340,10 @@ int main(int argc, char **argv) {
                 center = center + tmp;
                 nearCorners.push_back(tmp);
               }
+              // 5个点的中心点
               center = center / 5.0;
 
+              // 距离的平方的和
               Eigen::Matrix3d covMat = Eigen::Matrix3d::Zero();
               for (int j = 0; j < 5; j++) {
                 Eigen::Matrix<double, 3, 1> tmpZeroMean =
@@ -337,12 +357,15 @@ int main(int argc, char **argv) {
               // note Eigen library sort eigenvalues in increasing order
               Eigen::Vector3d unit_direction = saes.eigenvectors().col(2);
               // Eigen::Vector3d curr_point(pointOri.x, pointOri.y, pointOri.z);
+              // 如果这些点的最大特征值远大于最小特征值，即表明有主方向，即一条线
               if (saes.eigenvalues()[2] > 3 * saes.eigenvalues()[1]) {
+                // 以下三个点是last cloud中直线上的三个点
                 Eigen::Vector3d point_on_line = center;
                 Eigen::Vector3d last_point_a, last_point_b;
                 last_point_a = 0.1 * unit_direction + point_on_line;
                 last_point_b = -0.1 * unit_direction + point_on_line;
 
+                // curr_point是current cloud中的一个点
                 Eigen::Vector3d curr_point(cornerPointsSharp->points[i].x,
                                            cornerPointsSharp->points[i].y,
                                            cornerPointsSharp->points[i].z);
@@ -454,6 +477,8 @@ int main(int argc, char **argv) {
         }
         printf("optimization twice time %f \n", t_opt.toc());
 
+        // Hao: t_last_curr是针对坐标系的变换
+        // Hao: t_last_curr是相对变换而非固定坐标系下的变换，所以右乘
         t_w_curr = t_w_curr + q_w_curr * t_last_curr;
         q_w_curr = q_w_curr * q_last_curr;
         std::cout<<"t_w_curr: "<<t_w_curr.transpose()<<std::endl;
@@ -504,6 +529,7 @@ int main(int argc, char **argv) {
         }
       }
 
+      // Hao: 将接收到的点云根据计算的odometry变换到最后的位置，然后更新last variables，为下一帧做准备
       pcl::PointCloud<PointType>::Ptr laserCloudTemp = cornerPointsLessSharp;
       cornerPointsLessSharp = laserCloudCornerLast;
       laserCloudCornerLast = laserCloudTemp;

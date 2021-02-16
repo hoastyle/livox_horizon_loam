@@ -62,6 +62,8 @@ void ImuProcess::UndistortPcl(const PointCloudXYZI::Ptr &pcl_in_out,
     int ring = int(pt.intensity);
     float dt_bi = pt.intensity - ring;
 
+    // Hao: 如果没有rate信息，则不对点云做变换
+    // Hao: 这里的本意是存储点云的第一个点，之后会publish out
     if (dt_bi == 0) laserCloudtmp->push_back(pt);
     double ratio_bi = dt_bi / dt_be;
     /// Rotation from i-e
@@ -126,6 +128,8 @@ void ImuProcess::Process(const MeasureGroup &meas) {
 
   /// Undistort points
 
+  // T_i_l lidar to imu, T_l_c
+  // rotation in lidar = rotation from imu to lidar * rotation in imu * rotation from lidar to imu
   Sophus::SE3d T_l_be = T_i_l.inverse() * T_l_c * T_i_l;
   pcl::copyPointCloud(*cur_pcl_in_, *cur_pcl_un_);
   UndistortPcl(cur_pcl_un_, dt_l_c_, T_l_be);
@@ -141,6 +145,7 @@ void ImuProcess::Process(const MeasureGroup &meas) {
     laserCloudtmp->clear();
   }
 
+  // Hao: 做过畸变校准的点云
   {
     static ros::Publisher pub_UndistortPcl =
         nh.advertise<sensor_msgs::PointCloud2>("/livox_undistort", 100);
@@ -151,6 +156,7 @@ void ImuProcess::Process(const MeasureGroup &meas) {
     pub_UndistortPcl.publish(pcl_out_msg);
   }
 
+  // Hao: 没有做过畸变校准的点云
   {
     static ros::Publisher pub_UndistortPcl =
         nh.advertise<sensor_msgs::PointCloud2>("/livox_distort", 100);
